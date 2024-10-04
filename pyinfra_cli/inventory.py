@@ -12,6 +12,10 @@ from pyinfra.context import ctx_inventory
 from .exceptions import CliError
 from .util import exec_file, try_import_module_attribute
 
+import yaml
+import subprocess
+import shlex
+
 HostType = Union[str, Tuple[str, Dict]]
 
 # Hosts in an inventory can be just the hostname or a tuple (hostname, data)
@@ -49,22 +53,36 @@ def _get_group_data(dirname_or_filename: str):
             files = [path.join(dirname_or_filename, file) for file in listdir(dirname_or_filename)]
 
         for file in files:
-            if not file.endswith(".py"):
-                continue
+            group_name = None
 
-            group_name = path.basename(file)[:-3]
+            if file.endswith(".py"):
+                group_name = path.basename(file)[:-3]
 
-            logger.debug("Looking for group data in: %s", file)
+                logger.debug("Looking for group data in: %s", file)
 
-            # Read the files locals into a dict
-            attrs = exec_file(file, return_locals=True)
-            keys = attrs.get("__all__", attrs.keys())
+                # Read the files locals into a dict
+                attrs = exec_file(file, return_locals=True)
+                keys = attrs.get("__all__", attrs.keys())
 
-            group_data[group_name] = {
-                key: value
-                for key, value in attrs.items()
-                if key in keys and not key.startswith("__")
-            }
+                group_data[group_name] = {
+                    key: value
+                    for key, value in attrs.items()
+                    if key in keys and not key.startswith("__")
+                }
+
+            elif file.endswith(".yml") or file.endswith(".yaml"):
+                if file.endswith(".yml"):
+                    group_name = path.basename(file)[:-4]
+                else:
+                    group_name = path.basename(file)[:-5]
+
+                if group_name.endswith(".sops"):
+                    group_name = group_name[:-5]
+                    # unsops file before loading yaml content
+                    group_data[group_name] = yaml.load(subprocess.check_output(shlex.split(f"sops -d {file}"), text=True), Loader=yaml.SafeLoader)
+                else:
+                    # load simple yaml file
+                    group_data[group_name] = yaml.load(open(file, "r"), Loader=yaml.SafeLoader)
 
     return group_data
 
